@@ -7,13 +7,33 @@ from PIL import Image
 from datetime import datetime
 import random
 
-# --- 1. CẤU HÌNH GIAO DIỆN & STYLE ---
-st.set_page_config(page_title="TUAN PHONG V10.0 - MASTER AI", layout="wide")
+# --- 1. CẤU HÌNH GIAO DIỆN SÁNG (LIGHT MODE) ---
+st.set_page_config(page_title="TUAN PHONG V10.1", layout="wide")
 st.markdown("""
     <style>
-    .main-box { background-color: #0f172a; color: #fbbf24; padding: 20px; border-radius: 12px; font-family: 'JetBrains Mono', monospace; font-size: 1.5rem; border-left: 8px solid #fbbf24; margin-bottom: 20px; line-height: 1.6; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
-    .stTable td { font-weight: bold; font-size: 11px !important; text-align: center !important; }
-    .stMetric { background: #1e293b; padding: 10px; border-radius: 8px; border: 1px solid #334155; }
+    /* Bỏ nền đen, dùng nền trắng viền vàng cho Dàn số */
+    .main-box { 
+        background-color: #ffffff; 
+        color: #1e293b; 
+        padding: 20px; 
+        border-radius: 12px; 
+        font-family: 'JetBrains Mono', monospace; 
+        font-size: 1.6rem; 
+        border: 2px solid #fbbf24; 
+        margin-bottom: 20px; 
+        line-height: 1.6;
+        font-weight: bold;
+        text-align: center;
+    }
+    /* Chỉnh lại các bảng và metric cho sáng sủa */
+    .stMetric { 
+        background: #f8fafc; 
+        padding: 15px; 
+        border-radius: 10px; 
+        border: 1px solid #e2e8f0; 
+    }
+    div[data-testid="stExpander"] { border: none !important; }
+    .stTable td { font-weight: bold; font-size: 12px !important; text-align: center !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -57,13 +77,12 @@ def update_ai_weights():
     total = sum(new_w)
     return [(x / total) * 100 for x in new_w]
 
-# --- 5. ENGINE TÍNH ĐIỂM & RANK ĐỘC LẬP ---
+# --- 5. ENGINE TÍNH ĐIỂM ---
 @st.cache_data
-def calculate_master_v10(last_gdb, raw_107, weights, pts_vtri_str, pts_tt_str):
+def calculate_master_v101(last_gdb, raw_107, weights, pts_vtri_str, pts_tt_str):
     ocr_pos, math_pos = np.array(raw_107), np.array(build_math_100(last_gdb))
     p_vtri, p_tt = json.loads(pts_vtri_str), json.loads(pts_tt_str)
     s1, s2, s3, s4, s5, s6 = [np.zeros(100) for _ in range(6)]
-    
     for i in range(100):
         d, u, t = i//10, i%10, (i//10 + i%10)%10
         s1[i] = np.sum(ocr_pos == d) * 10 + (random.random() * 0.05)
@@ -73,7 +92,6 @@ def calculate_master_v10(last_gdb, raw_107, weights, pts_vtri_str, pts_tt_str):
         s4[i] = 1000 - k_raw + (random.random() * 0.05)
         s6[i] = k_raw + (random.random() * 0.05)
         s5[i] = p_tt['dau'][d]*10 + p_tt['duoi'][u]*8 + p_tt['bo'][get_bo_idx(i)]*15
-        
     df = pd.DataFrame({"SO": [f"{i:02d}" for i in range(100)], "A1":s1,"A2":s2,"A3":s3,"A4":s4,"A5":s5,"A6":s6})
     w = weights
     df["DIEM_TONG"] = (df["A1"]*w[0] + df["A2"]*w[1] + df["A3"]*w[2] + df["A4"]*w[3] + df["A5"]*w[4] + df["A6"]*w[5]) / 6
@@ -84,73 +102,69 @@ def find_rank_unique(df, target, col):
     match = temp[temp['SO'] == target].index
     return int(match[0]) + 1 if len(match) > 0 else 50
 
-# --- 6. GIAO DIỆN HỆ THỐNG ---
+# --- 6. GIAO DIỆN SIDEBAR ---
 with st.sidebar:
-    st.header("⚙️ QUẢN LÝ DỮ LIỆU")
+    st.header("⚙️ QUẢN LÝ")
     up_json = st.file_uploader("Nạp Data (.json):", type="json")
-    if up_json: st.session_state.db = json.load(up_json); st.success("Data Loaded!"); st.rerun()
-    
-    st.divider()
-    img_file = st.file_uploader("Quét ảnh kết quả:", type=["png","jpg","jpeg"])
+    if up_json: st.session_state.db = json.load(up_json); st.rerun()
+    img_file = st.file_uploader("Quét ảnh:", type=["png","jpg","jpeg"])
     if img_file:
-        st.image(img_file, caption="Ảnh chờ quét", use_container_width=True)
+        st.image(img_file, use_container_width=True)
         if st.button("🚀 QUÉT & PHÂN TÍCH AI", type="primary", use_container_width=True):
-            with st.spinner("AI is thinking..."):
-                reader = load_ocr()
-                res_ocr = reader.readtext(np.array(Image.open(img_file).convert('L')), allowlist='0123456789')
-                ocr_n, gdb_n = [], ""
-                for (bbox, txt, prob) in res_ocr:
-                    if 5 <= len(txt) <= 6 and not gdb_n: gdb_n = txt
-                    for d in txt: ocr_n.append(int(d))
-                if gdb_n:
-                    db = st.session_state.db
-                    if db["last_gdb"]:
-                        df_old = calculate_master_v10(db["last_gdb"], db["raw_107"], tuple(db["weights"]), json.dumps(db["pts_vi_tri"]), json.dumps(db["pts_thuoc_tinh"]))
-                        target = gdb_n[-2:]
-                        res = {"Kỳ": len(db["history"])+1, "GĐB": gdb_n, "Số": target, "Time": datetime.now().strftime("%H:%M")}
-                        res["Rank_AI"] = find_rank_unique(df_old, target, "DIEM_TONG")
-                        for i in range(1, 7): res[f"Rank_A{i}"] = find_rank_unique(df_old, target, f"A{i}")
-                        db["history"].insert(0, res)
-                    db["last_gdb"], db["raw_107"] = gdb_n, (ocr_n + [0]*107)[:107]
-                    db["weights"] = update_ai_weights()
-                    st.rerun()
-
-    st.divider()
+            reader = load_ocr()
+            res_ocr = reader.readtext(np.array(Image.open(img_file).convert('L')), allowlist='0123456789')
+            ocr_n, gdb_n = [], ""
+            for (bbox, txt, prob) in res_ocr:
+                if 5 <= len(txt) <= 6 and not gdb_n: gdb_n = txt
+                for d in txt: ocr_n.append(int(d))
+            if gdb_n:
+                db = st.session_state.db
+                if db["last_gdb"]:
+                    df_old = calculate_master_v101(db["last_gdb"], db["raw_107"], tuple(db["weights"]), json.dumps(db["pts_vi_tri"]), json.dumps(db["pts_thuoc_tinh"]))
+                    target = gdb_n[-2:]; res = {"Kỳ": len(db["history"])+1, "GĐB": gdb_n, "Số": target, "Time": datetime.now().strftime("%H:%M")}
+                    res["Rank_AI"] = find_rank_unique(df_old, target, "DIEM_TONG")
+                    for i in range(1, 7): res[f"Rank_A{i}"] = find_rank_unique(df_old, target, f"A{i}")
+                    db["history"].insert(0, res)
+                db["last_gdb"], db["raw_107"] = gdb_n, (ocr_n + [0]*107)[:107]
+                db["weights"] = update_ai_weights()
+                st.rerun()
     if st.button("🔴 RESET ALL DATA", use_container_width=True):
-        st.session_state.clear()
-        st.rerun()
+        st.session_state.clear(); st.rerun()
 
 # --- 7. HIỂN THỊ CHÍNH ---
-st.title("🛡️ TUAN PHONG COMMANDER V10.0")
+st.title("🛡️ TUAN PHONG COMMANDER V10.1")
 
 if st.session_state.db["last_gdb"]:
     db = st.session_state.db
     active_w = update_ai_weights()
-    df_m = calculate_master_v10(db["last_gdb"], db["raw_107"], tuple(active_w), json.dumps(db["pts_vi_tri"]), json.dumps(db["pts_thuoc_tinh"]))
+    df_m = calculate_master_v101(db["last_gdb"], db["raw_107"], tuple(active_w), json.dumps(db["pts_vi_tri"]), json.dumps(db["pts_thuoc_tinh"]))
     
     t1, t2, t3 = st.tabs(["🎯 DÀN KHUYÊN DÙNG", "📊 ĐỐI TRỌNG ENGINE", "🕒 NHẬT KÝ CHI TIẾT"])
     
     with t1:
-        st.write(f"### 🛡️ Kỳ hiện tại: **{db['last_gdb']}**")
-        c1, c2 = st.columns([1, 2])
+        # Thay đổi giao diện cho sáng hơn
+        c1, c2, c3 = st.columns([1, 1, 1])
         with c1:
+            st.metric("Kỳ hiện tại", db['last_gdb'])
+        with c2:
             avg_r = np.mean([h['Rank_AI'] for h in db['history'][:3]]) if db['history'] else 50
             st.metric("Chỉ số cầu", "Ổn định" if avg_r < 45 else "Biến động", f"{round(avg_r,1)} Rank")
+        with c3:
             n_kd = st.number_input("Số quân:", 1, 100, 51)
-        with c2:
-            st.subheader("🔥 DÀN AI TỐI ƯU")
-            danh_sach = df_m.sort_values("DIEM_TONG").head(n_kd)['SO'].tolist()
-            st.markdown(f"<div class='main-box'>{' '.join(danh_sach)}</div>", unsafe_allow_html=True)
+            
+        st.subheader("🔥 DÀN AI TỐI ƯU")
+        danh_sach = df_m.sort_values("DIEM_TONG").head(n_kd)['SO'].tolist()
+        # Nền trắng chữ đen viền vàng
+        st.markdown(f"<div class='main-box'>{' '.join(danh_sach)}</div>", unsafe_allow_html=True)
 
     with t2:
-        st.subheader("⚖️ Tỷ trọng tin tưởng 6 Engine")
+        st.subheader("⚖️ Tỷ trọng tin tưởng Engine")
         w_df = pd.DataFrame({"Engine": [f"App {i}" for i in range(1,7)], "Đối trọng (%)": [round(x,1) for x in active_w]})
         st.table(w_df.set_index("Engine").T)
-        st.line_chart(active_w)
 
     with t3:
         if db["history"]:
             st.table(pd.DataFrame(db["history"])[['Kỳ', 'GĐB', 'Số', 'Rank_AI', 'Rank_A1', 'Rank_A2', 'Rank_A3', 'Rank_A4', 'Rank_A5', 'Rank_A6', 'Time']])
 
 with st.sidebar:
-    st.divider(); st.download_button("💾 XUẤT BACKUP", json.dumps(st.session_state.db), "MASTER_DATA.json", use_container_width=True)
+    st.divider(); st.download_button("💾 SAO LƯU DATA", json.dumps(st.session_state.db), "MASTER_DATA.json", use_container_width=True)
