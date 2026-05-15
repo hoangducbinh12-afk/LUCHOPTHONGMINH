@@ -8,7 +8,7 @@ from datetime import datetime
 import random
 
 # --- 1. GIAO DIỆN SÁNG CHUẨN MOBILE ---
-st.set_page_config(page_title="TUAN PHONG V11.2", layout="wide")
+st.set_page_config(page_title="TUAN PHONG V11.3", layout="wide")
 st.markdown("""
     <style>
     .main-box { 
@@ -28,11 +28,11 @@ def get_bo_idx(n):
         if n in v: return i
     return 0
 
-# --- DỮ LIỆU ĐÃ ĐƯỢC CẮT BỎ KỲ CUỐI (TỰ ĐỘNG CHÈN VÀO CODE) ---
-DATA_261 = {"last_gdb": "76669", "raw_107": [7, 6, 6, 6, 9, 0, 0, 0, 0, 0] + [0]*97, "weights": [16.6, 16.6, 16.6, 16.6, 16.6, 16.6], "auto_mode": True, "pts_vi_tri": {f"app{i}": [{"d":1,"u":1} for _ in range(120)] for i in [1,2,3,4,6]}, "pts_thuoc_tinh": {"dau": [34, 5, 6, 3, 8, 12, 2, 16, 39, 1], "duoi": [9, 10, 7, 4, 1, 16, 22, 5, 3, 2], "bo": [29, 12, 16, 30, 9, 45, 5, 32, 2, 46, 6, 7, 3, 23, 1], "tong": [13, 3, 16, 1, 9, 2, 4, 27, 5, 18]}, "history": [{"Kỳ": 43, "GĐB": "76669", "Số": "69", "Time": "Thứ năm ngày 14-05-2026", "Rank_AI": 48, "Rank_A1": 76, "Rank_A2": 24, "Rank_A3": 46, "Rank_A4": 57, "Rank_A5": 45, "Rank_A6": 41}]}
+# --- DỮ LIỆU GỐC 261 KỲ TÍCH LŨY ---
+DATA_GOC = {"last_gdb": "76669", "raw_107": [7, 6, 6, 6, 9, 0, 0, 0, 0, 0] + [0]*97, "weights": [16.6, 16.6, 16.6, 16.6, 16.6, 16.6], "auto_mode": True, "pts_vi_tri": {f"app{i}": [{"d":1,"u":1} for _ in range(120)] for i in [1,2,3,4,6]}, "pts_thuoc_tinh": {"dau": [34, 5, 6, 3, 8, 12, 2, 16, 39, 1], "duoi": [9, 10, 7, 4, 1, 16, 22, 5, 3, 2], "bo": [29, 12, 16, 30, 9, 45, 5, 32, 2, 46, 6, 7, 3, 23, 1], "tong": [13, 3, 16, 1, 9, 2, 4, 27, 5, 18]}, "history": [{"Kỳ": 43, "GĐB": "76669", "Số": "69", "Time": "Thứ năm ngày 14-05-2026", "Rank_AI": 48, "Rank_A1": 76, "Rank_A2": 24, "Rank_A3": 46, "Rank_A4": 57, "Rank_A5": 45, "Rank_A6": 41}]}
 
 if 'db' not in st.session_state or st.session_state.db["last_gdb"] == "":
-    st.session_state.db = DATA_261
+    st.session_state.db = DATA_GOC
 
 @st.cache_resource
 def load_ocr(): return easyocr.Reader(['en'], gpu=False)
@@ -44,13 +44,26 @@ def build_math_100(gdb_str):
     for s in range(20): res.extend([(x+s)%10 for x in d])
     return res[:100]
 
-def update_ai_weights_v112():
+# --- BỘ NÃO AI SỬA LỖI ĐỌC NHẬT KÝ ---
+def update_ai_weights_v113():
     db = st.session_state.db
-    if len(db["history"]) < 1: return [16.6] * 6
-    return [16.6] * 6
+    if len(db["history"]) < 2: return [16.6] * 6
+    
+    recent = db["history"][:3]
+    new_w = [16.6] * 6
+    for i in range(6):
+        # Đọc điểm từng kỳ, nếu không tìm thấy hoặc trống thì mặc định là 50
+        ranks = [h.get(f"Rank_A{i+1}", 50) for h in recent]
+        ranks = [r if (isinstance(r, (int, float)) and r > 0) else 50 for r in ranks]
+        
+        if all(r < 35 for r in ranks[:2]): new_w[i] -= 5.0 # Cầu đang đỏ quá -> giảm nhẹ phòng gãy
+        if ranks[0] > 65: new_w[i] += 8.0 # Vừa văng xa -> bơm điểm chờ hồi cầu
+        
+    total = sum(new_w) if sum(new_w) > 0 else 100
+    return [(x / total) * 100 for x in new_w]
 
 @st.cache_data
-def calculate_master_v112(last_gdb, raw_107, weights, pts_vtri_str, pts_tt_str):
+def calculate_master_v113(last_gdb, raw_107, weights, pts_vtri_str, pts_tt_str):
     ocr_pos, math_pos = np.array(raw_107), np.array(build_math_100(last_gdb))
     p_vtri = json.loads(pts_vtri_str)
     p_tt = json.loads(pts_tt_str)
@@ -74,7 +87,7 @@ def find_rank_unique(df, target, col):
     match = temp[temp['SO'] == target].index
     return int(match[0]) + 1 if len(match) > 0 else 50
 
-def update_logic_v112(gdb_new):
+def update_logic_v113(gdb_new):
     db = st.session_state.db
     target_num = int(gdb_new[-2:])
     d, u, t = target_num//10, target_num%10, (target_num//10 + target_num%10)%10
@@ -110,15 +123,25 @@ with st.sidebar:
             if gdb_n:
                 db = st.session_state.db
                 if db["last_gdb"]:
-                    df_old = calculate_master_v112(db["last_gdb"], db["raw_107"], tuple(db["weights"]), json.dumps(db["pts_vi_tri"]), json.dumps(db["pts_thuoc_tinh"]))
+                    # Lấy nền tảng điểm tính toán ngay lập tức
+                    df_old = calculate_master_v113(db["last_gdb"], db["raw_107"], tuple(db["weights"]), json.dumps(db["pts_vi_tri"]), json.dumps(db["pts_thuoc_tinh"]))
                     target = gdb_n[-2:]
                     res = {"Kỳ": len(db["history"])+1, "GĐB": gdb_n, "Số": target, "Time": datetime.now().strftime("%H:%M")}
+                    
+                    # ÉP BUỘC TÍNH TOÁN VÀ GHI ĐÈ ĐIỂM SỐ RANK VÀO LỊCH SỬ KHÔNG ĐỂ TRỐNG
                     res["Rank_AI"] = find_rank_unique(df_old, target, "DIEM_TONG")
-                    for i in range(1, 7): res[f"Rank_A{i}"] = find_rank_unique(df_old, target, f"A{i}")
+                    res["Rank_A1"] = find_rank_unique(df_old, target, "A1")
+                    res["Rank_A2"] = find_rank_unique(df_old, target, "A2")
+                    res["Rank_A3"] = find_rank_unique(df_old, target, "A3")
+                    res["Rank_A4"] = find_rank_unique(df_old, target, "A4")
+                    res["Rank_A5"] = find_rank_unique(df_old, target, "A5")
+                    res["Rank_A6"] = find_rank_unique(df_old, target, "A6")
+                    
                     db["history"].insert(0, res)
                 
-                update_logic_v112(gdb_n)
+                update_logic_v113(gdb_n)
                 db["last_gdb"], db["raw_107"] = gdb_n, (ocr_n + [0]*107)[:107]
+                db["weights"] = update_ai_weights_v113()
                 st.rerun()
 
     st.divider()
@@ -129,8 +152,9 @@ with st.sidebar:
 # --- HIỂN THỊ ---
 db = st.session_state.db
 if db["last_gdb"]:
-    active_w = update_ai_weights_v112()
-    df_m = calculate_master_v112(db["last_gdb"], db["raw_107"], tuple(active_w), json.dumps(db["pts_vi_tri"]), json.dumps(db["pts_thuoc_tinh"]))
+    active_w = update_ai_weights_v113()
+    db["weights"] = active_w
+    df_m = calculate_master_v113(db["last_gdb"], db["raw_107"], tuple(active_w), json.dumps(db["pts_vi_tri"]), json.dumps(db["pts_thuoc_tinh"]))
     t1, t2, t3 = st.tabs(["🎯 DÀN AI TỐI ƯU", "📊 ĐỐI TRỌNG ENGINE", "🕒 NHẬT KÝ CHI TIẾT"])
     
     with t1:
@@ -142,12 +166,12 @@ if db["last_gdb"]:
         st.markdown(f"<div class='main-box'>{' '.join(danh_sach)}</div>", unsafe_allow_html=True)
         
     with t2:
-        st.subheader("⚖️ Tỷ Trọng Quyết Định Hiện Tại")
-        w_df = pd.DataFrame({"Engine": [f"App {i}" for i in range(1,7)], "Đối trọng (%)": [round(x,1) for x in active_w]})
+        st.subheader("⚖️ Tỷ Trọng Quyết Định Hiện Tại Của 6 App")
+        w_df = pd.DataFrame({"Engine": [f"App {i}" for i in range(1,7)], "Đối trọng thực tế (%)": [round(x,1) for x in active_w]})
         st.table(w_df.set_index("Engine").T)
+        st.line_chart(active_w)
         st.divider()
-        # NÚT THẦN THÁNH: ẤN VÀO ĐÂY LÀ ĐIỆN THOẠI TỰ TẢI FILE JSON 261 KỲ VỀ!
-        st.download_button("💾 XUẤT BACKUP DATA (.JSON) - BẤM ĐỂ TẢI FILE 261 KỲ", json.dumps(db), "LUC_HOP_261_DAYS.json", use_container_width=True)
+        st.download_button("💾 XUẤT BACKUP DATA (.JSON)", json.dumps(db), "MASTER_DATA_V113.json", use_container_width=True)
 
     with t3:
         if db["history"]:
